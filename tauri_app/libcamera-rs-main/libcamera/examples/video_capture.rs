@@ -103,7 +103,7 @@ fn main() {
         .open(&filename)
         .expect("Unable to create output file");
     
-    for _ in 0..60 {
+    for _ in 0..5 {
         println!("Waiting for camera request execution");
         let mut req = rx.recv().expect("Sender disconnect");
 
