@@ -1,15 +1,7 @@
 use std::{fs::OpenOptions, io::Write, process::exit, time::Duration};
 
 use libcamera::{
-    camera::CameraConfigurationStatus,
-    camera_manager::CameraManager,
-    framebuffer::AsFrameBuffer,
-    framebuffer_allocator::{FrameBuffer, FrameBufferAllocator},
-    framebuffer_map::MemoryMappedFrameBuffer,
-    pixel_format::PixelFormat,
-    properties,
-    request::ReuseFlag,
-    stream::StreamRole,
+    camera::CameraConfigurationStatus, camera_manager::CameraManager, framebuffer::AsFrameBuffer, framebuffer_allocator::{FrameBuffer, FrameBufferAllocator}, framebuffer_map::MemoryMappedFrameBuffer, geometry::Size, pixel_format::PixelFormat, properties, request::ReuseFlag, stream::StreamRole
 };
 
 // drm-fourcc does not have MJPEG type yet, construct it from raw fourcc identifier
@@ -42,6 +34,10 @@ fn main() {
     let mut cfgs = cam.generate_configuration(&[StreamRole::VideoRecording]).unwrap();
 
     cfgs.get_mut(0).unwrap().set_pixel_format(PIXEL_FORMAT_RGB888);
+    cfgs.get_mut(0).unwrap().set_size(Size {
+        width: 640,
+        height: 480
+    });
 
     println!("Generated config: {:#?}", cfgs);
 
@@ -59,6 +55,7 @@ fn main() {
     );
 
     cam.configure(&mut cfgs).expect("Unable to configure camera");
+    println!("Used config: {:#?}", cfgs);
 
     let mut alloc = FrameBufferAllocator::new(&cam);
 
@@ -105,36 +102,35 @@ fn main() {
         .create(true)
         .open(&filename)
         .expect("Unable to create output file");
-    let mut count = 0;
-    while count < 60 {
+    
+    for _ in 0..60 {
         println!("Waiting for camera request execution");
-        let mut req = rx.recv_timeout(Duration::from_millis(2000)).expect("Camera request failed");
+        let mut req = rx.recv().expect("Sender disconnect");
 
         println!("Camera request {:?} completed!", req);
         println!("Metadata: {:#?}", req.metadata());
 
         // Get framebuffer for our stream
-        let framebuffer: &MemoryMappedFrameBuffer<FrameBuffer> = req.buffer(&stream).unwrap();
-        println!("FrameBuffer metadata: {:#?}", framebuffer.metadata());
+        let framebuffer: &MemoryMappedFrameBuffer<FrameBuffer> = req.buffer(&stream).unwrap(); //type framebuffer == the same as when it was created
+        let metadata = framebuffer.metadata().unwrap(); //В этот момент метадата заведомо существует 
+        println!("FrameBuffer metadata: {:#?}", metadata);
 
         // MJPEG format has only one data plane containing encoded jpeg data with all the headers
         let planes = framebuffer.data();
-        let frame_data = planes.get(0).unwrap();
+        let frame_data = planes.get(0).unwrap(); //?для формата rg24 только 1 plane
+
+        print!("{}", planes.len());
         // Actual encoded data will be smalled than framebuffer size, its length can be obtained from metadata.
-        let bytes_used = framebuffer.metadata().unwrap().planes().get(0).unwrap().bytes_used as usize;
+        let bytes_used = metadata.planes().get(0).unwrap().bytes_used as usize;//?для формата rg24 только 1 plane
 
         file.write(&frame_data[..bytes_used]).unwrap();
         println!("Written {} bytes to {}", bytes_used, &filename);
 
         // Recycle the request back to the camera for execution
         req.reuse(ReuseFlag::REUSE_BUFFERS);
-        cam.queue_request(req).unwrap();
+        cam.queue_request(req).unwrap();//мы получаем точно известные буферы
 
-        count += 1;
-    }
-
-    //fn error_handler(){}
-
+    }   
 
     // Everything is cleaned up automatically by Drop implementations
 }
